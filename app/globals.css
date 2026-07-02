@@ -1,0 +1,173 @@
+@import "tailwindcss";
+
+:root, [data-theme="gold"] {
+  --primary: #C9A55F;
+  --primary-light: color-mix(in srgb, var(--primary), white 30%);
+  --gold: var(--primary);
+  --gold-light: var(--primary-light);
+  --dark: #1A1A2E;
+  --bg: #F8F9FC;
+  --card: #FFFFFF;
+  --border: #E8ECF1;
+  --text: #1A1A2E;
+  --muted: #6B7280;
+  --bottom-nav: 64px;
+}
+
+[data-theme="blue"]    { --primary: #2563EB; --primary-light: #60A5FA; }
+[data-theme="emerald"] { --primary: #059669; --primary-light: #34D399; }
+[data-theme="rose"]    { --primary: #BE185D; --primary-light: #F472B6; }
+[data-theme="light"]   { --primary: #2563EB; --primary-light: #60A5FA; }
+
+[data-theme="dark"] {
+  --primary: #C9A55F;
+  --primary-light: color-mix(in srgb, var(--primary), white 30%);
+  --dark: #0A0D14;
+  --bg: #0A0D14;
+  --card: #131820;
+  --border: #1E2532;
+  --text: #EDEFF2;
+  --muted: #8B949E;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Segoe UI', 'Tahoma', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  direction: rtl;
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100vh;
+  position: relative;
+}
+
+/* Mobile app shell */
+.app-screen {
+  min-height: 100vh;
+  padding-bottom: calc(var(--bottom-nav) + 16px);
+  background: var(--bg);
+}
+
+/* Bottom navigation */
+.bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 430px;
+  height: var(--bottom-nav);
+  background: white;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  z-index: 100;
+  padding: 0 8px;
+}
+
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 16px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 10px;
+  min-width: 56px;
+}
+
+.nav-item.active { color: var(--gold); }
+.nav-item.active svg { stroke: var(--gold); }
+
+/* Cards */
+.card {
+  background: white;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/* Buttons */
+.btn-gold {
+  background: linear-gradient(135deg, var(--gold), var(--gold-light));
+  color: white;
+  border: none;
+  padding: 14px 24px;
+  border-radius: 14px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: opacity 0.2s;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--gold) 40%, transparent);
+}
+.btn-gold:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.btn-outline {
+  background: white;
+  color: var(--gold);
+  border: 1.5px solid var(--gold);
+  padding: 13px 24px;
+  border-radius: 14px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+  transition: all 0.2s;
+}
+
+/* Input */
+.input {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  font-size: 15px;
+  outline: none;
+  background: white;
+  color: var(--text);
+  transition: border-color 0.2s;
+  font-family: inherit;
+}
+.input:focus { border-color: var(--gold); }
+
+/* Badge */
+.badge { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+.badge-pending    { background: #FEF3C7; color: #92400E; }
+.badge-confirmed  { background: #DBEAFE; color: #1E40AF; }
+.badge-completed  { background: #D1FAE5; color: #065F46; }
+.badge-cancelled  { background: #FEE2E2; color: #991B1B; }
+.badge-in_progress{ background: #EDE9FE; color: #5B21B6; }
+
+/* Section title */
+.section-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 14px;
+}
+
+/* Scrollable row */
+.scroll-row {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+.scroll-row::-webkit-scrollbar { display: none; }
+
+/* Status bar placeholder */
+.status-bar { height: 44px; background: var(--dark); }
