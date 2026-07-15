@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     const receipt_url = `data:${file.type};base64,${base64}`
 
     await ensureTable()
-    const result = await pool.query(
+    const receiptResult = await pool.query(
       `INSERT INTO payment_receipts
          (appointment_ids, customer_name, customer_phone, receipt_url, amount, payment_method)
        VALUES ($1, $2, $3, $4, $5, 'bank_transfer')
@@ -53,7 +53,18 @@ export async function POST(req: NextRequest) {
       [appointment_ids, (session as any).name || '', (session as any).phone || '', receipt_url, amount]
     )
 
-    return NextResponse.json({ ok: true, id: result.rows[0].id })
+    const receiptId = receiptResult.rows[0].id
+
+    // Also insert into payments table for each appointment
+    for (const apptId of appointment_ids) {
+      await pool.query(
+        `INSERT INTO payments (source_type, source_id, amount, method, status, paid_at)
+         VALUES ('appointment', $1::uuid, $2, 'bank_transfer', 'pending', NOW())`,
+        [apptId, amount]
+      ).catch(() => {})
+    }
+
+    return NextResponse.json({ ok: true, id: receiptId })
   } catch (err: any) {
     console.error('[payment-receipts POST]', err.message)
     return NextResponse.json({ error: 'حدث خطأ في الرفع' }, { status: 500 })

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { useApi } from '@/lib/fetcher'
 import { useCart, usePaidAppts } from '@/lib/useCart'
+import { startMoyasarCheckout } from '@/lib/moyasar-client'
 import { mutate } from 'swr'
 
 /* ─── Types ─────────────────────────────────────────────── */
@@ -142,18 +143,16 @@ function PaymentModal({ open, onClose, products, services, bank, onPaid }: {
   const [receiptPreview, setReceiptPreview]= useState<string | null>(null)
   const [receiptError,   setReceiptError]  = useState('')
   const [receiptUploading, setReceiptUploading] = useState(false)
-  // Card
-  const [cardNumber,  setCardNumber]  = useState('')
-  const [cardHolder,  setCardHolder]  = useState('')
-  const [cardExpiry,  setCardExpiry]  = useState('')
-  const [cardCvv,     setCardCvv]     = useState('')
-  const [cardFlipped, setCardFlipped] = useState(false)
+  // Moyasar card
+  const [moyasarLoading, setMoyasarLoading] = useState(false)
+  const [moyasarError,   setMoyasarError]   = useState('')
+  const moyasarInited    = useRef(false)
 
   useEffect(() => {
     if (!open) {
       setTab('transfer'); setCopied(false); setShowIban(false); setSubmitting(false)
       setReceiptFile(null); setReceiptPreview(null); setReceiptError('')
-      setCardNumber(''); setCardHolder(''); setCardExpiry(''); setCardCvv(''); setCardFlipped(false)
+      setMoyasarLoading(false); setMoyasarError(''); moyasarInited.current = false
     }
   }, [open])
 
@@ -167,26 +166,55 @@ function PaymentModal({ open, onClose, products, services, bank, onPaid }: {
   const copyIban = () => { navigator.clipboard.writeText(bank.iban).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 2000) }
   const maskIban = (v: string) => showIban ? v : v.slice(0, 4) + ' **** **** **** ' + v.slice(-4)
 
-  // Card helpers
-  const fmtCardNumber = (v: string) => v.replace(/\D/g, '').slice(0, 16).replace(/(.{4})/g, '$1 ').trim()
-  const fmtExpiry = (v: string) => { const d = v.replace(/\D/g, '').slice(0, 4); return d.length >= 3 ? d.slice(0, 2) + '/' + d.slice(2) : d }
-  const detectCard = (n: string) => {
-    const d = n.replace(/\D/g, '')
-    if (/^4/.test(d))               return { type: 'visa',       label: 'VISA',       color: '#1A1F71' }
-    if (/^5[1-5]|^2[2-7]/.test(d)) return { type: 'mastercard', label: 'MC',         color: '#EB001B' }
-    if (/^3[47]/.test(d))           return { type: 'amex',       label: 'AMEX',       color: '#007BC1' }
-    return { type: '', label: '', color: '#9CA3AF' }
-  }
-  const luhn = (n: string) => {
-    const d = n.replace(/\D/g, ''); let s = 0, alt = false
-    for (let i = d.length - 1; i >= 0; i--) { let v = parseInt(d[i]); if (alt) { v *= 2; if (v > 9) v -= 9 } s += v; alt = !alt }
-    return s % 10 === 0
-  }
-  const cd = detectCard(cardNumber)
-  const rawNum = cardNumber.replace(/\D/g, '')
-  const isAmex = cd.type === 'amex'
-  const cvvLen = isAmex ? 4 : 3
-  const cardOk = rawNum.length >= (isAmex ? 15 : 16) && luhn(rawNum) && cardHolder.trim().length > 0 && cardExpiry.length === 5 && cardCvv.replace(/\D/g, '').length >= cvvLen
+  // Moyasar initialization when card tab is selected
+  useEffect(() => {
+    if (tab !== 'card' || !open || moyasarInited.current) return
+    let cancelled = false
+
+    const init = async () => {
+      setMoyasarLoading(true); setMoyasarError('')
+      try {
+        let orderId: string | null = null
+        let apptIds: string[] = []
+
+        if (products.length > 0) {
+          const items = products.map(p => ({ product_id: p.product_id, quantity: p.quantity }))
+          const r = await fetch('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) })
+          const d = await r.json()
+          if (d.orderId) orderId = String(d.orderId)
+        }
+        apptIds = services.map((a: any) => String(a.id))
+
+        if (!orderId && apptIds.length === 0) {
+          if (!cancelled) { setMoyasarError('لا توجد عناصر للدفع'); setMoyasarLoading(false) }
+          return
+        }
+
+        const cfg = await fetch('/api/payment-config').then(r => r.json())
+        if (!cfg.enabled || !cfg.publishableKey) {
+          if (!cancelled) { setMoyasarError('الدفع بالبطاقة غير متاح حالياً'); setMoyasarLoading(false) }
+          return
+        }
+
+        if (cancelled) return
+        moyasarInited.current = true
+        setMoyasarLoading(false)
+
+        await startMoyasarCheckout({
+          elementSelector: '#moyasar-card-form',
+          amountSar: total,
+          description: `طلب من متجر (${count} عنصر)`,
+          publishableKey: cfg.publishableKey,
+          orderId,
+          appointmentIds: apptIds.length > 0 ? apptIds : undefined,
+        })
+      } catch (err: any) {
+        if (!cancelled) { setMoyasarError(err.message || 'تعذر تحميل نموذج الدفع'); setMoyasarLoading(false) }
+      }
+    }
+    init()
+    return () => { cancelled = true }
+  }, [tab, open, products, services, total, count]) // eslint-disable-line
 
   const handleReceiptFile = (file: File) => {
     const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
@@ -216,12 +244,6 @@ function PaymentModal({ open, onClose, products, services, bank, onPaid }: {
     } catch { setReceiptError('حدث خطأ في رفع السند'); setSubmitting(false); setReceiptUploading(false); return }
     setReceiptUploading(false)
     onPaid('حوالة بنكية')
-    setSubmitting(false)
-  }
-
-  const handleCardConfirm = async () => {
-    setSubmitting(true)
-    onPaid('بطاقة بنكية')
     setSubmitting(false)
   }
 
@@ -357,79 +379,31 @@ function PaymentModal({ open, onClose, products, services, bank, onPaid }: {
         {/* ── Tab: بطاقة بنكية ── */}
         {tab === 'card' && (
           <div style={{ margin: '14px 20px 20px' }}>
-            {/* Card brands */}
-            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginBottom: 14 }}>
-              {[{ t: 'visa', l: 'VISA', c: '#1A1F71' }, { t: 'mastercard', l: 'MC', c: '#EB001B' }, { t: 'amex', l: 'AMEX', c: '#007BC1' }].map(b => (
-                <div key={b.t} style={{ width: 44, height: 28, borderRadius: 6, border: `1.5px solid ${cd.type === b.t ? b.c : '#E5E7EB'}`, background: cd.type === b.t ? b.c + '18' : '#F9FAFB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 800, color: cd.type === b.t ? b.c : '#9CA3AF', letterSpacing: 0.5 }}>
-                  {b.l}
-                </div>
-              ))}
-            </div>
-
-            {/* Visual card */}
-            <div style={{ borderRadius: 16, padding: '18px 20px', marginBottom: 16, minHeight: 120, background: cd.type ? `linear-gradient(135deg,${cd.color}dd,${cd.color}88)` : 'linear-gradient(135deg,#1A1A2E,#0F3460)', boxShadow: '0 8px 32px rgba(0,0,0,0.25)', position: 'relative', overflow: 'hidden' }}>
-              <div style={{ position: 'absolute', top: -20, right: -20, width: 140, height: 140, borderRadius: '50%', background: 'rgba(255,255,255,0.06)' }} />
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 }}>
-                <div style={{ width: 38, height: 26, borderRadius: 5, background: 'linear-gradient(135deg,#FFD700,#FFA500)' }} />
-                {cd.label && <span style={{ color: 'white', fontWeight: 900, fontSize: 14, letterSpacing: 1 }}>{cd.label}</span>}
+            {moyasarLoading && (
+              <div style={{ textAlign: 'center', padding: 30, color: '#9CA3AF' }}>
+                <div style={{ width: 36, height: 36, border: '3px solid rgba(201,165,95,0.2)', borderTopColor: 'var(--gold)', borderRadius: '50%', animation: 'spin .8s linear infinite', margin: '0 auto 12px' }} />
+                <p style={{ fontSize: 13, fontWeight: 600 }}>جارٍ تحميل نموذج الدفع...</p>
+                <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
               </div>
-              <div style={{ fontFamily: 'monospace', fontSize: 16, fontWeight: 700, color: 'white', letterSpacing: 3, marginBottom: 14 }}>
-                {rawNum.length > 0 ? fmtCardNumber(cardNumber) : '•••• •••• •••• ••••'}
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 9, marginBottom: 2 }}>CARDHOLDER</div>
-                  <div style={{ color: 'white', fontWeight: 600, fontSize: 12, letterSpacing: 1 }}>{cardHolder || 'YOUR NAME'}</div>
+            )}
+            {moyasarError && (
+              <div style={{ textAlign: 'center', padding: 20 }}>
+                <div style={{ background: '#FEE2E2', borderRadius: 12, padding: '12px 16px', marginBottom: 14 }}>
+                  <p style={{ color: '#B91C1C', fontSize: 13, fontWeight: 600, margin: 0 }}>{moyasarError}</p>
                 </div>
-                <div>
-                  <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 9, marginBottom: 2 }}>EXPIRES</div>
-                  <div style={{ color: 'white', fontWeight: 600, fontSize: 12, fontFamily: 'monospace' }}>{cardExpiry || 'MM/YY'}</div>
+                <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: '#166534', lineHeight: 1.6 }}>
+                  يمكنك استخدام التحويل البنكي كبديل
                 </div>
               </div>
-            </div>
-
-            {/* Card number */}
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'block', fontSize: 12, color: '#6B7280', marginBottom: 5, fontWeight: 600 }}>رقم البطاقة</label>
-              <input value={cardNumber} inputMode="numeric" placeholder="1234 5678 9012 3456" maxLength={19}
-                onChange={e => setCardNumber(fmtCardNumber(e.target.value))}
-                style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: `1px solid ${rawNum.length >= 15 ? (luhn(rawNum) ? '#10B981' : '#EF4444') : '#E5E7EB'}`, background: '#F9FAFB', fontSize: 15, fontFamily: 'monospace', letterSpacing: 2, outline: 'none', boxSizing: 'border-box' }} />
-            </div>
-
-            {/* Cardholder */}
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'block', fontSize: 12, color: '#6B7280', marginBottom: 5, fontWeight: 600 }}>الاسم على البطاقة</label>
-              <input value={cardHolder} placeholder="MOHAMMED ALI" autoCapitalize="characters"
-                onChange={e => setCardHolder(e.target.value.toUpperCase())}
-                style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #E5E7EB', background: '#F9FAFB', fontSize: 13, fontFamily: 'monospace', letterSpacing: 1, outline: 'none', boxSizing: 'border-box' }} />
-            </div>
-
-            {/* Expiry + CVV */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 12, color: '#6B7280', marginBottom: 5, fontWeight: 600 }}>تاريخ الانتهاء</label>
-                <input value={cardExpiry} inputMode="numeric" placeholder="MM/YY" maxLength={5}
-                  onChange={e => setCardExpiry(fmtExpiry(e.target.value))}
-                  style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #E5E7EB', background: '#F9FAFB', fontSize: 14, fontFamily: 'monospace', letterSpacing: 2, outline: 'none', boxSizing: 'border-box' }} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: 12, color: '#6B7280', marginBottom: 5, fontWeight: 600 }}>رمز الأمان {isAmex ? '(4)' : '(CVV)'}</label>
-                <input value={cardCvv} inputMode="numeric" placeholder={isAmex ? '••••' : '•••'} maxLength={cvvLen} type="password"
-                  onFocus={() => setCardFlipped(true)} onBlur={() => setCardFlipped(false)}
-                  onChange={e => setCardCvv(e.target.value.replace(/\D/g, '').slice(0, cvvLen))}
-                  style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #E5E7EB', background: '#F9FAFB', fontSize: 14, fontFamily: 'monospace', letterSpacing: 3, outline: 'none', boxSizing: 'border-box' }} />
-              </div>
-            </div>
-
-            <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: '#166534', marginBottom: 14 }}>
-              🔒 معلوماتك محمية بتشفير SSL. لا يتم حفظ بيانات بطاقتك.
-            </div>
-
-            <button type="button" onClick={handleCardConfirm} disabled={submitting || !cardOk}
-              style={{ width: '100%', padding: 14, borderRadius: 14, border: 'none', background: 'linear-gradient(135deg,var(--gold),var(--gold-light))', color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit', opacity: (submitting || !cardOk) ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-              <CreditCard size={16} />
-              {submitting ? 'جارٍ المعالجة...' : `ادفع الآن — ${total.toLocaleString()} ر.س`}
-            </button>
+            )}
+            {!moyasarLoading && !moyasarError && (
+              <>
+                <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: '#166534', marginBottom: 14 }}>
+                  أدخل بيانات بطاقتك الآمنة أدناه لإتمام الدفع — {total.toLocaleString()} ر.س
+                </div>
+                <div id="moyasar-card-form" style={{ minHeight: 180 }} />
+              </>
+            )}
           </div>
         )}
       </div>
@@ -496,9 +470,13 @@ export default function CartPage() {
   const creatingRef = useRef(false)
 
   useEffect(() => {
-    fetch('/api/settings').then(r => r.json()).then(d => {
-      if (d) setBankInfo({ bank_name: d.bank_name || '', account_holder: d.account_holder || '', iban: d.iban || '', account_number: d.account_number || '' })
-    }).catch(() => {})
+    fetch('/api/bank-account').then(r => r.json()).then(d => {
+      if (d && d.iban) setBankInfo({ bank_name: d.bank_name || '', account_holder: d.account_holder || '', iban: d.iban || '', account_number: d.account_number || '' })
+    }).catch(() => {
+      fetch('/api/settings').then(r => r.json()).then(d => {
+        if (d) setBankInfo({ bank_name: d.bank_name || '', account_holder: d.account_holder || '', iban: d.iban || '', account_number: d.account_number || '' })
+      }).catch(() => {})
+    })
   }, [])
 
   // ── Derived values ──
