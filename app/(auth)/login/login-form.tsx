@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { Mail, Phone, Lock, Eye, EyeOff, ArrowLeft, KeyRound, Download } from 'lucide-react'
 import Link from 'next/link'
@@ -26,6 +26,11 @@ export default function LoginForm({ name: initialName, logo_url: initialLogo }: 
   const [settings, setSettings]     = useState({ name: initialName, logo_url: initialLogo })
   const [installPrompt, setInstallPrompt] = useState<any>(null)
   const [showInstall, setShowInstall] = useState(false)
+  const [googleReady, setGoogleReady] = useState(false)
+  const googleBtnRef = useRef<HTMLDivElement>(null)
+  const googleInitDone = useRef(false)
+
+  const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ''
 
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then(d => {
@@ -60,6 +65,51 @@ export default function LoginForm({ name: initialName, logo_url: initialLogo }: 
     setShowInstall(false)
     localStorage.setItem(INSTALL_DISMISSED_KEY, '1')
   }
+
+  // Load Google Identity Services
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID || typeof window === 'undefined') return
+    const existing = document.querySelector('script[src="https://accounts.google.com/gsi/client"]')
+    if (existing) { setGoogleReady(true); return }
+    const script = document.createElement('script')
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.async = true; script.defer = true
+    script.onload = () => setGoogleReady(true)
+    document.head.appendChild(script)
+  }, [])
+
+  // Initialize Google when ready
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID || !googleReady || !(window as any).google || googleInitDone.current) return
+    try {
+      ;(window as any).google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: async (resp: any) => {
+          if (!resp.credential) return
+          setLoading(true); setError('')
+          const r = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'google_login', credential: resp.credential }) })
+          const d = await r.json()
+          setLoading(false)
+          if (!r.ok) { setError(d.error || 'خطأ في تسجيل الدخول بـ Google'); return }
+          router.push('/home')
+        },
+        auto_select: false, cancel_on_tap_outside: true,
+      })
+      googleInitDone.current = true
+    } catch (e) { console.error('Google init error:', e) }
+  }, [googleReady, GOOGLE_CLIENT_ID])
+
+  // Render Google button when choose mode is shown
+  useEffect(() => {
+    if (!googleInitDone.current || !(window as any).google || mode !== 'choose' || !googleBtnRef.current) return
+    if (googleBtnRef.current.children.length > 0) return
+    try {
+      ;(window as any).google.accounts.id.renderButton(googleBtnRef.current, {
+        theme: 'outline', size: 'large', width: googleBtnRef.current.offsetWidth || 340,
+        text: 'continue_with', shape: 'rectangular', locale: 'ar',
+      })
+    } catch (e) { console.error('Google renderButton error:', e) }
+  }, [mode, googleReady])
 
   const phone = isPhone(identifier)
 
@@ -131,6 +181,16 @@ export default function LoginForm({ name: initialName, logo_url: initialLogo }: 
           <div>
             <h2 style={{ color: 'white', fontSize: 20, fontWeight: 700, marginBottom: 6, textAlign: 'center' }}>تسجيل الدخول</h2>
             <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textAlign: 'center', marginBottom: 24 }}>اختر طريقة الدخول</p>
+
+            {GOOGLE_CLIENT_ID && <>
+              <div ref={googleBtnRef} style={{ width: '100%', minHeight: 44, marginBottom: 16 }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.12)' }} />
+                <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12 }}>أو</span>
+                <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.12)' }} />
+              </div>
+            </>}
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <button onClick={() => setMode('password')} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 18px', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 14, cursor: 'pointer', color: 'white', textAlign: 'right', width: '100%' }}>
                 <div style={{ width: 44, height: 44, borderRadius: 12, background: `linear-gradient(135deg,${gold},var(--gold-light))`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
